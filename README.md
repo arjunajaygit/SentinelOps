@@ -11,7 +11,7 @@
 ---
 
 ## 📸 See It In Action
-> *(Note: Replace this block with a GIF or a clean screenshot showing your bot's comment with a ```suggestion``` block on a real GitHub PR)*
+![PR Review Example](assets/pr_review.png)
 
 ---
 
