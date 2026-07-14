@@ -1,52 +1,85 @@
-# SentinelOps 🛡️
+# 🛡️ SentinelOps
+**Autonomous, Multi-Agent DevSecOps Code Reviewer**
 
-SentinelOps is a containerized, AI-powered DevSecOps code reviewer that automatically analyzes GitHub Pull Requests. It acts as an autonomous intelligence filter, enforcing security best practices and architectural standards while aggressively filtering out trivial developer noise.
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-orange)](#)
+[![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker)](#)
 
-## 🚀 Features
-
-- **Multi-Agent Orchestration:** Powered by LangGraph, SentinelOps deploys specialized autonomous agents for parallel analysis:
-  - 🔒 **Security Agent:** Hunts for injection flaws, hardcoded secrets, and weak cryptography.
-  - 🎨 **Style Agent:** Enforces DRY principles and prevents memory leaks or async blocking.
-  - 🧠 **Synthesizer Agent:** Acts as the Lead Reviewer, deduplicating findings and generating precise Markdown code suggestions.
-- **RAG Architecture (Retrieval-Augmented Generation):** Unlike standard bots that only read the PR diff, SentinelOps clones the repository and builds a local vector database using **ChromaDB** and **Hugging Face (`all-MiniLM-L6-v2`)**. This gives the AI deep architectural context to prevent hallucinations.
-- **Developer Fatigue Prevention:** A strict intelligence filter explicitly drops pedantic noise like formatting nits and missing docstrings, ensuring developers only see high-value, actionable alerts.
-- **Lightning Fast Inference:** Powered by **Groq** (`llama-3.3-70b-versatile`), providing instant, free inference.
-- **Cloud-Ready Containerization:** Fully containerized via Docker with DevSecOps footprint optimizations (CPU-only PyTorch) for fast, lightweight deployment.
+*SentinelOps is an event-driven webhook service. It listens to GitHub Pull Requests, indexes the entire repository using localized embeddings (RAG), and uses specialized AI agents to post actionable, inline security and architectural fixes directly to your code.*
 
 ---
 
-## 🛠️ Local Setup
+## 📸 See It In Action
+> *(Note: Replace this block with a GIF or a clean screenshot showing your bot's comment with a ```suggestion``` block on a real GitHub PR)*
 
-1. **Clone the repository and install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+---
 
-2. **Configure Environment Variables:**
-   Create a `.env` file in the root directory (do not use quotes around values):
-   ```ini
-   GITHUB_TOKEN=github_pat_...
-   GROQ_API_KEY=gsk_...
-   WEBHOOK_SECRET=your_secret_string
-   ```
+## 🏗️ System Architecture
 
-3. **Run the Development Server:**
-   ```bash
-   uvicorn app.main:app --reload --port 8000
-   ```
+Unlike standard LLM wrappers, SentinelOps utilizes a stateful, multi-agent LangGraph architecture to prevent hallucination and reduce developer fatigue. It strictly keeps repository context local to ensure data sovereignty.
 
-4. **Expose to GitHub:**
-   Run an ngrok tunnel to expose your local port:
-   ```bash
-   ngrok http 8000
-   ```
-   Add `https://<your-ngrok-url>/webhook` as the Payload URL in your GitHub Repository Webhooks settings.
+```mermaid
+graph TD
+    %% Webhook Entry Point
+    PR[GitHub PR Created] -->|Webhook Event| API(FastAPI Orchestrator)
+    
+    %% RAG Pipeline
+    subgraph Local Edge Environment
+        API -->|Clone Repo & Extract Diff| RAG[Codebase Context Agent]
+        RAG -->|Chunk & Embed| CHROMA[(ChromaDB Vector Store)]
+        HF[Hugging Face all-MiniLM-L6-v2] -.->|Generates Embeddings| CHROMA
+    end
+
+    %% Multi-Agent Workflow
+    subgraph LangGraph Multi-Agent Workflow
+        RAG -->|Diff + Context| SEC[Security Specialist Agent]
+        RAG -->|Diff + Context| STY[Code Style Agent]
+        
+        SEC -->|Vulnerability Findings| SYN[PR Synthesizer Agent]
+        STY -->|Maintainability Findings| SYN
+        
+        SYN -->|Intelligence Filter| FILTER{Actionable?}
+    end
+
+    %% Output
+    FILTER -->|Yes| POST[Post Inline GitHub Comment with Fix]
+    FILTER -->|No| DROP[Silently Drop Noise]
+```
+
+---
+
+## ⚡ Core Tech Stack
+- **Backend:** FastAPI, Python, Uvicorn
+- **AI Orchestration:** LangGraph, LangChain
+- **Local RAG Pipeline:** ChromaDB, Hugging Face `sentence-transformers`
+- **LLM Inference:** Groq (`llama-3.3-70b-versatile`)
+- **Git Operations:** PyGithub, GitPython, GitHub Webhooks
+- **Deployment:** Docker
+
+---
+
+## 🚀 Quickstart & Local Testing
+
+### 1. Environment Setup
+Create a `.env` file in the root directory. Never commit this file.
+```ini
+WEBHOOK_SECRET=your_github_webhook_secret
+GITHUB_TOKEN=ghp_your_github_pat
+GROQ_API_KEY=gsk_your_groq_api_key
+```
+
+### 2. Run the Development Server Locally
+```bash
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
 
 ---
 
 ## 🐳 Docker Deployment
 
-SentinelOps is built for easy cloud deployment. You can either build it from source or pull the pre-built image directly from Docker Hub.
+SentinelOps is built for easy cloud deployment. The Docker image pre-downloads the Hugging Face models to ensure instant startup and prevents runtime downloads on the server.
 
 **Option 1: Pull from Docker Hub (Fastest)**
 ```bash
@@ -60,10 +93,16 @@ docker build -t sentinel-ops .
 docker run -p 8000:8000 --env-file .env sentinel-ops
 ```
 
-### 🔗 Webhook & Cloud Routing
+---
+
+## 🔗 Webhook & Cloud Routing
+
 Regardless of how you run it (locally or via Docker), the container exposes a `/webhook` endpoint on port `8000`. 
-If you are running this locally, you must use a tool like **ngrok** to route GitHub traffic to your local Docker container:
+
+If you are running this locally on your machine, you must use a tool like **ngrok** to route public GitHub traffic to your local port:
 ```bash
 ngrok http 8000
 ```
-Then, go to your GitHub Repository -> Settings -> Webhooks, and add `https://<your-ngrok-url>/webhook` as the Payload URL. If you deploy this to a cloud provider (like AWS or Render), simply use their provided public URL instead of ngrok!
+Then, go to your **GitHub Repository -> Settings -> Webhooks**, and add `https://<your-ngrok-url>/webhook` as the Payload URL. 
+
+*(If you deploy this image to a cloud provider like AWS or Render, simply use their provided public URL instead of ngrok!)*
