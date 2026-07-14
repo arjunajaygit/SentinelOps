@@ -46,16 +46,24 @@ SentinelOps is a containerized, AI-powered DevSecOps code reviewer that automati
 
 ## 🐳 Docker Deployment
 
-SentinelOps is built for easy cloud deployment. The Dockerfile is highly optimized to run locally or on AWS/Render.
+SentinelOps is built for easy cloud deployment. You can either build it from source or pull the pre-built image directly from Docker Hub.
 
-**Build the Image:**
+**Option 1: Pull from Docker Hub (Fastest)**
 ```bash
-docker build -t sentinel-ops .
+docker pull arjunajaydocker/sentinel-ops
+docker run -p 8000:8000 --env-file .env arjunajaydocker/sentinel-ops
 ```
 
-**Run the Container:**
+**Option 2: Build Locally from Source**
 ```bash
+docker build -t sentinel-ops .
 docker run -p 8000:8000 --env-file .env sentinel-ops
 ```
 
-*(Note: The container exposes port 8000. Ensure your webhook routes to this port).*
+### 🔗 Webhook & Cloud Routing
+Regardless of how you run it (locally or via Docker), the container exposes a `/webhook` endpoint on port `8000`. 
+If you are running this locally, you must use a tool like **ngrok** to route GitHub traffic to your local Docker container:
+```bash
+ngrok http 8000
+```
+Then, go to your GitHub Repository -> Settings -> Webhooks, and add `https://<your-ngrok-url>/webhook` as the Payload URL. If you deploy this to a cloud provider (like AWS or Render), simply use their provided public URL instead of ngrok!
