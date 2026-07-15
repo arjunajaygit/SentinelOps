@@ -26,7 +26,8 @@ INSTRUCTIONS:
 1. Review the input findings. 
 2. Silently discard any finding that falls into the [DROP IT] category.
 3. If ALL findings are dropped, return the exact string: "NO_ACTIONABLE_FINDINGS".
-4. For the remaining valid findings, format them as a professional Markdown review, including a ```suggestion``` block with the exact diff to fix the issue.
+4. For the remaining valid findings, format them as a professional Markdown review.
+5. Provide a clear code block with the exact fixed code. Use standard markdown language tags (e.g. ````python`). Do NOT use the ````suggestion` tag, as it causes Git merge conflicts for multi-line functions.
 """
 
 logger = logging.getLogger(__name__)
