@@ -3,6 +3,7 @@ from typing import TypedDict, List, Dict, Any, Annotated
 from langgraph.graph import StateGraph, END
 from app.agents.security_agent import security_node
 from app.agents.style_agent import style_node
+from app.agents.sast_orchestrator import sast_orchestrator_node
 from app.agents.synthesizer import synthesizer_node
 
 class AgentState(TypedDict):
@@ -17,6 +18,10 @@ class AgentState(TypedDict):
     security_findings: Annotated[List[Dict[str, Any]], operator.add]
     style_findings: Annotated[List[Dict[str, Any]], operator.add]
     
+    # SAST Orchestrator state
+    raw_sast_alerts: List[Dict[str, Any]]
+    triaged_sast_findings: List[Dict[str, Any]]
+    
     final_comments: List[Dict[str, Any]]
     critical_issues_found: bool
 
@@ -29,12 +34,14 @@ def build_graph():
     # Add nodes
     workflow.add_node("security", security_node)
     workflow.add_node("style", style_node)
+    workflow.add_node("sast_orchestrator", sast_orchestrator_node)
     workflow.add_node("synthesizer", synthesizer_node)
     
-    # Define execution graph (sequential for simplicity)
+    # Define execution graph (sequential)
     workflow.set_entry_point("security")
     workflow.add_edge("security", "style")
-    workflow.add_edge("style", "synthesizer")
+    workflow.add_edge("style", "sast_orchestrator")
+    workflow.add_edge("sast_orchestrator", "synthesizer")
     workflow.add_edge("synthesizer", END)
     
     return workflow.compile()

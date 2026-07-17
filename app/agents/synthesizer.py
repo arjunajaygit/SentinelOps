@@ -36,8 +36,18 @@ async def synthesizer_node(state: dict) -> dict:
     logger.info("Running PR Synthesizer Agent...")
     security_findings = state.get("security_findings", [])
     style_findings = state.get("style_findings", [])
+    triaged_sast_findings = state.get("triaged_sast_findings", [])
     
-    all_findings = security_findings + style_findings
+    # Convert triaged SAST findings into the same format used by the AI agents
+    sast_comments = []
+    for finding in triaged_sast_findings:
+        sast_comments.append({
+            "filename": finding.get("file", "unknown"),
+            "line": finding.get("line", 1),
+            "body": f"**SAST Alert ({finding.get('scanner', 'scanner').upper()}) [{finding.get('severity', 'UNKNOWN')}]:**\n\n{finding.get('description', '')}"
+        })
+    
+    all_findings = security_findings + style_findings + sast_comments
     if not all_findings:
         return {"final_comments": [], "critical_issues_found": False}
         

@@ -32,6 +32,18 @@ graph TD
         HF[Hugging Face all-MiniLM-L6-v2] -.->|Generates Embeddings| CHROMA
     end
 
+    %% SAST Pipeline
+    subgraph SAST Orchestrator
+        API -->|3. Concurrent Scan| BANDIT[Bandit]
+        API -->|3. Concurrent Scan| SEMGREP[Semgrep]
+        API -->|3. Concurrent Scan| GITLEAKS[Gitleaks]
+        BANDIT --> AGG[Alert Aggregator]
+        SEMGREP --> AGG
+        GITLEAKS --> AGG
+        AGG -->|Raw Alerts| TRIAGE[LLM Triage Analyst]
+        TRIAGE -->|Filter False Positives| TRIAGED[Triaged Findings]
+    end
+
     %% Multi-Agent Workflow
     subgraph LangGraph Multi-Agent Workflow
         RAG -->|Diff + Context| SEC[Security Specialist Agent]
@@ -39,6 +51,7 @@ graph TD
         
         SEC -->|Vulnerability Findings| SYN[PR Synthesizer Agent]
         STY -->|Maintainability Findings| SYN
+        TRIAGED -->|SAST True Positives| SYN
         
         SYN -->|Intelligence Filter| FILTER{Actionable?}
     end
@@ -47,24 +60,26 @@ graph TD
     FILTER -->|Yes| POST[Post Inline GitHub Comment]
     FILTER -->|No| DROP[Silently Drop Noise]
     
-    POST -->|3. Dispatch 'Failure' Status| STATUS_FAIL[GitHub Checks API: Block Merge]
-    DROP -->|3. Dispatch 'Success' Status| STATUS_PASS[GitHub Checks API: Allow Merge]
+    POST -->|4. Dispatch 'Failure' Status| STATUS_FAIL[GitHub Checks API: Block Merge]
+    DROP -->|4. Dispatch 'Success' Status| STATUS_PASS[GitHub Checks API: Allow Merge]
 ```
 
 ---
 
 ## 🚀 Key Features
 
-- **Multi-Agent Orchestration:** Powered by LangGraph, SentinelOps deploys specialized autonomous agents for parallel analysis:
+- **Multi-Agent Orchestration:** Powered by LangGraph, SentinelOps deploys specialized autonomous agents for analysis:
   - 🔒 **Security Agent:** Hunts for injection flaws, hardcoded secrets, and weak cryptography.
   - 🎨 **Style Agent:** Enforces DRY principles and prevents memory leaks or async blocking.
+  - 🛡️ **SAST Orchestrator:** Runs Bandit, Semgrep, and Gitleaks concurrently, then uses an LLM Triage Analyst to filter false positives before merging findings.
   - 🧠 **Synthesizer Agent:** Acts as the Lead Reviewer, deduplicating findings and generating precise Markdown code suggestions that developers can safely copy and paste into their IDE.
+- **Defense-in-Depth Security:** Combines deterministic SAST tools (high recall, zero hallucination) with AI agents (contextual understanding) to catch vulnerabilities that neither approach would find alone.
 - **RAG Architecture (Retrieval-Augmented Generation):** Unlike standard bots that only read the PR diff, SentinelOps clones the repository and builds a local vector database using **ChromaDB** and **Hugging Face (`all-MiniLM-L6-v2`)**. This gives the AI deep architectural context to prevent hallucinations.
-- **Developer Fatigue Prevention:** A strict intelligence filter explicitly drops pedantic noise like formatting nits and missing docstrings, ensuring developers only see high-value, actionable alerts.
+- **Developer Fatigue Prevention:** A dual-layer intelligence filter: the SAST Orchestrator drops tool-level false positives, and the Synthesizer drops pedantic style nits, ensuring developers only see high-value, actionable alerts.
 - **Strict CI Gatekeeper:** Integrates directly with the **GitHub Checks API** to dynamically block or allow Pull Request merges based on the severity of the AI's findings.
 - **Provider-Agnostic LLM Configuration:** Natively supports any OpenAI-compatible API endpoint (OpenAI, Groq, local Ollama, vLLM) preventing vendor lock-in.
 - **Lightning Fast Inference:** Engineered for high-speed analysis using Groq (`llama-3.3-70b-versatile`), providing instant, free inference.
-- **Cloud-Ready Containerization:** Fully containerized via Docker with DevSecOps footprint optimizations (CPU-only PyTorch) for fast, lightweight deployment.
+- **Hardened Docker Deployment:** Runs as a non-root user (`sentinel_user`) following the Principle of Least Privilege, with pre-installed SAST toolchain and pre-downloaded ML models for instant cold starts.
 
 ---
 
@@ -72,6 +87,7 @@ graph TD
 - **Backend:** FastAPI, Python, Uvicorn
 - **AI Orchestration:** LangGraph, LangChain
 - **Local RAG Pipeline:** ChromaDB, Hugging Face `sentence-transformers`
+- **SAST Toolchain:** Bandit, Semgrep, Gitleaks
 - **LLM Inference:** Groq (`llama-3.3-70b-versatile`)
 - **Git Operations:** PyGithub, GitPython, GitHub Webhooks
 - **Deployment:** Docker

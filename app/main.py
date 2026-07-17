@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.core.github_client import GitHubClient
 from app.rag.indexer import CodebaseIndexer
 from app.agents.graph import build_graph
+from app.utils.sast_runner import run_all_sast_scanners
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -74,6 +75,9 @@ async def process_pull_request(payload: dict):
                 return indexer.persist_directory
                 
             chroma_persist_dir = await asyncio.to_thread(clone_and_index)
+            
+            # 2.5. Run SAST scanners concurrently on the cloned repo
+            raw_sast_alerts = await run_all_sast_scanners(temp_dir)
         
             # 3. Get diff data
             diff_data = await asyncio.to_thread(github_client.get_pr_files_diff, repo_full_name, pr_number)
@@ -96,6 +100,8 @@ async def process_pull_request(payload: dict):
                 "chroma_persist_dir": chroma_persist_dir,
                 "security_findings": [],
                 "style_findings": [],
+                "raw_sast_alerts": raw_sast_alerts,
+                "triaged_sast_findings": [],
                 "final_comments": [],
                 "critical_issues_found": False
             }
