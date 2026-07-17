@@ -1,18 +1,40 @@
+import os
 import asyncio
 import json
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Set
 
 logger = logging.getLogger(__name__)
 
 SCANNER_TIMEOUT = 120  # seconds
 
+def detect_languages(clone_dir: str) -> List[str]:
+    """
+    Crawls the repository and detects languages based on file extensions.
+    Ignores common dependency and build directories.
+    """
+    languages = set()
+    ignored_dirs = {"node_modules", "venv", ".git", "dist", "build", ".chroma_db", "vendor"}
+    
+    for root, dirs, files in os.walk(clone_dir):
+        # Mutate dirs in-place to skip ignored directories
+        dirs[:] = [d for d in dirs if d not in ignored_dirs and not d.startswith(".")]
+        
+        for file in files:
+            if file.endswith(".py"):
+                languages.add("python")
+            elif file.endswith((".js", ".ts", ".jsx", ".tsx")):
+                languages.add("javascript")
+            elif file.endswith(".go"):
+                languages.add("go")
+            elif file.endswith(".java"):
+                languages.add("java")
+                
+    logger.info(f"Detected languages in repository: {languages}")
+    return list(languages)
+
 
 async def run_bandit(clone_dir: str) -> List[Dict[str, Any]]:
-    """
-    Runs Bandit (Python SAST) against the cloned repository.
-    Bandit exits with code 1 when vulnerabilities are found — this is expected.
-    """
     alerts = []
     try:
         process = await asyncio.create_subprocess_exec(
@@ -20,13 +42,10 @@ async def run_bandit(clone_dir: str) -> List[Dict[str, Any]]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(), timeout=SCANNER_TIMEOUT
-        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
 
-        # Bandit exit codes: 0 = clean, 1 = issues found, other = error
         if process.returncode not in (0, 1):
-            logger.warning(f"Bandit exited with unexpected code {process.returncode}: {stderr.decode()[:200]}")
+            logger.warning(f"Bandit exited with code {process.returncode}: {stderr.decode()[:200]}")
             return []
 
         if stdout:
@@ -40,25 +59,77 @@ async def run_bandit(clone_dir: str) -> List[Dict[str, Any]]:
                     "description": f"[{result.get('test_id', '')}] {result.get('issue_text', '')}",
                     "confidence": result.get("issue_confidence", "UNKNOWN").upper()
                 })
-
-        logger.info(f"Bandit scan complete: {len(alerts)} alerts found.")
-    except asyncio.TimeoutError:
-        logger.error("Bandit scan timed out.")
-    except json.JSONDecodeError as e:
-        logger.error(f"Bandit produced malformed JSON: {e}")
-    except FileNotFoundError:
-        logger.warning("Bandit is not installed. Skipping Bandit scan.")
     except Exception as e:
-        logger.error(f"Unexpected error running Bandit: {e}")
+        logger.error(f"Error running Bandit: {e}")
+    return alerts
 
+
+async def run_njsscan(clone_dir: str) -> List[Dict[str, Any]]:
+    alerts = []
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "njsscan", "--json", clone_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
+
+        if stdout:
+            data = json.loads(stdout.decode())
+            if "nodejs" in data:
+                for category, details in data["nodejs"].items():
+                    # details contains "files" and "metadata"
+                    metadata = details.get("metadata", {})
+                    severity = metadata.get("severity", "HIGH").upper()
+                    description = metadata.get("description", category)
+                    
+                    for file_info in details.get("files", []):
+                        # njsscan sometimes uses "file_path", and gives match_lines [start, end]
+                        file_path = file_info.get("file_path", "")
+                        lines = file_info.get("match_lines", [0])
+                        start_line = lines[0] if lines else 0
+                        
+                        alerts.append({
+                            "scanner": "njsscan",
+                            "severity": severity,
+                            "file": file_path,
+                            "line": start_line,
+                            "description": f"[{category}] {description}",
+                            "confidence": "HIGH"
+                        })
+    except Exception as e:
+        logger.error(f"Error running njsscan: {e}")
+    return alerts
+
+
+async def run_gosec(clone_dir: str) -> List[Dict[str, Any]]:
+    alerts = []
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "gosec", "-fmt=json", "-out=/dev/stdout", "./...",
+            cwd=clone_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
+
+        if stdout:
+            data = json.loads(stdout.decode())
+            for issue in data.get("Issues", []):
+                alerts.append({
+                    "scanner": "gosec",
+                    "severity": issue.get("severity", "UNKNOWN").upper(),
+                    "file": os.path.join(clone_dir, issue.get("file", "")), # gosec uses relative paths sometimes
+                    "line": int(issue.get("line", "0").split("-")[0]), # gosec line can be a range like '15-18'
+                    "description": f"[{issue.get('rule_id', '')}] {issue.get('details', '')}",
+                    "confidence": issue.get("confidence", "UNKNOWN").upper()
+                })
+    except Exception as e:
+        logger.error(f"Error running gosec: {e}")
     return alerts
 
 
 async def run_semgrep(clone_dir: str) -> List[Dict[str, Any]]:
-    """
-    Runs Semgrep (multi-language SAST) against the cloned repository.
-    Semgrep exits with code 1 when findings are present.
-    """
     alerts = []
     try:
         process = await asyncio.create_subprocess_exec(
@@ -66,13 +137,7 @@ async def run_semgrep(clone_dir: str) -> List[Dict[str, Any]]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(), timeout=SCANNER_TIMEOUT
-        )
-
-        if process.returncode not in (0, 1):
-            logger.warning(f"Semgrep exited with unexpected code {process.returncode}: {stderr.decode()[:200]}")
-            return []
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
 
         if stdout:
             data = json.loads(stdout.decode())
@@ -85,25 +150,12 @@ async def run_semgrep(clone_dir: str) -> List[Dict[str, Any]]:
                     "description": f"[{result.get('check_id', '')}] {result.get('extra', {}).get('message', '')}",
                     "confidence": "HIGH"
                 })
-
-        logger.info(f"Semgrep scan complete: {len(alerts)} alerts found.")
-    except asyncio.TimeoutError:
-        logger.error("Semgrep scan timed out.")
-    except json.JSONDecodeError as e:
-        logger.error(f"Semgrep produced malformed JSON: {e}")
-    except FileNotFoundError:
-        logger.warning("Semgrep is not installed. Skipping Semgrep scan.")
     except Exception as e:
-        logger.error(f"Unexpected error running Semgrep: {e}")
-
+        logger.error(f"Error running Semgrep: {e}")
     return alerts
 
 
 async def run_secrets_scan(clone_dir: str) -> List[Dict[str, Any]]:
-    """
-    Runs Gitleaks (secrets scanner) against the cloned repository.
-    Gitleaks exits with code 1 when leaks are found.
-    """
     alerts = []
     try:
         process = await asyncio.create_subprocess_exec(
@@ -113,14 +165,7 @@ async def run_secrets_scan(clone_dir: str) -> List[Dict[str, Any]]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(), timeout=SCANNER_TIMEOUT
-        )
-
-        # Gitleaks exit codes: 0 = clean, 1 = leaks found
-        if process.returncode not in (0, 1):
-            logger.warning(f"Gitleaks exited with unexpected code {process.returncode}: {stderr.decode()[:200]}")
-            return []
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
 
         if stdout:
             data = json.loads(stdout.decode())
@@ -134,41 +179,39 @@ async def run_secrets_scan(clone_dir: str) -> List[Dict[str, Any]]:
                         "description": f"[{leak.get('RuleID', 'secret')}] Secret detected: {leak.get('Description', 'Potential secret or credential')}",
                         "confidence": "HIGH"
                     })
-
-        logger.info(f"Gitleaks scan complete: {len(alerts)} alerts found.")
-    except asyncio.TimeoutError:
-        logger.error("Gitleaks scan timed out.")
-    except json.JSONDecodeError as e:
-        logger.error(f"Gitleaks produced malformed JSON: {e}")
-    except FileNotFoundError:
-        logger.warning("Gitleaks is not installed. Skipping secrets scan.")
     except Exception as e:
-        logger.error(f"Unexpected error running Gitleaks: {e}")
-
+        logger.error(f"Error running Gitleaks: {e}")
     return alerts
 
 
-async def run_all_sast_scanners(clone_dir: str) -> List[Dict[str, Any]]:
+async def run_all_sast_scanners(clone_dir: str) -> Dict[str, Any]:
     """
-    Runs all SAST scanners concurrently using asyncio.gather().
-    Returns a unified, normalized list of alerts.
-    Gracefully degrades: if any scanner fails, returns results from the others.
+    Detects languages, dynamically allocates SAST tools, and runs them concurrently.
+    Returns a unified dict containing detected languages and normalized alerts.
     """
     logger.info(f"Starting concurrent SAST scans on: {clone_dir}")
-
-    bandit_results, semgrep_results, secrets_results = await asyncio.gather(
-        run_bandit(clone_dir),
-        run_semgrep(clone_dir),
-        run_secrets_scan(clone_dir),
-        return_exceptions=True
-    )
-
+    
+    detected_languages = detect_languages(clone_dir)
+    
+    # Always run Semgrep and Gitleaks
+    tasks = {
+        "semgrep": run_semgrep(clone_dir),
+        "gitleaks": run_secrets_scan(clone_dir)
+    }
+    
+    # Dynamically allocate language-specific scanners
+    if "python" in detected_languages:
+        tasks["bandit"] = run_bandit(clone_dir)
+    if "javascript" in detected_languages:
+        tasks["njsscan"] = run_njsscan(clone_dir)
+    if "go" in detected_languages:
+        tasks["gosec"] = run_gosec(clone_dir)
+        
+    scanner_names = list(tasks.keys())
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    
     aggregated = []
-    for scanner_name, result in [
-        ("bandit", bandit_results),
-        ("semgrep", semgrep_results),
-        ("gitleaks", secrets_results)
-    ]:
+    for scanner_name, result in zip(scanner_names, results):
         if isinstance(result, Exception):
             logger.error(f"SAST scanner '{scanner_name}' raised an exception: {result}")
         elif isinstance(result, list):
@@ -180,5 +223,9 @@ async def run_all_sast_scanners(clone_dir: str) -> List[Dict[str, Any]]:
         if alert.get("file", "").startswith(clone_dir_prefix):
             alert["file"] = alert["file"][len(clone_dir_prefix):]
 
-    logger.info(f"SAST aggregation complete: {len(aggregated)} total alerts from all scanners.")
-    return aggregated
+    logger.info(f"SAST aggregation complete: {len(aggregated)} total alerts from {len(scanner_names)} scanners.")
+    
+    return {
+        "alerts": aggregated,
+        "languages": detected_languages
+    }

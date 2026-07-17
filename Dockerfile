@@ -20,12 +20,17 @@ RUN apt-get update && apt-get install -y \
     git \
     build-essential \
     wget \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Gitleaks binary (secrets scanner)
 RUN wget -qO- "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_arm64.tar.gz" \
     | tar xz -C /usr/local/bin gitleaks \
     && chmod +x /usr/local/bin/gitleaks
+
+# Install Gosec binary
+RUN wget -qO- https://raw.githubusercontent.com/securego/gosec/master/install.sh | sh -s -- -b /usr/local/bin v2.20.0
 
 # Set the working directory
 WORKDIR /app
@@ -35,7 +40,7 @@ COPY requirements.txt .
 
 # Install Python dependencies + SAST tools
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir bandit semgrep
+    && pip install --no-cache-dir bandit semgrep njsscan
 
 # OPTIMIZATION: Pre-download the Hugging Face embedding model into the image.
 # This prevents the app from downloading it on every server restart/scale-up.

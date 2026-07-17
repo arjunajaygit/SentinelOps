@@ -7,12 +7,14 @@ from app.core.config import settings
 SYNTHESIZER_SYSTEM_PROMPT = """
 You are the Lead DevSecOps Reviewer. Your job is to synthesize findings from the Security and Style agents into a final, professional GitHub PR comment.
 
+DETECTED LANGUAGES IN THIS PR: {detected_languages}
+
 CRITICAL INSTRUCTION: DEVELOPER FATIGUE PREVENTION
 You must act as an aggressive intelligence filter. Developers hate noisy, pedantic PR comments. Before including ANY finding from the Style Agent, you must pass it through this filter:
 
 [DROP IT - DO NOT INCLUDE]
 - Formatting nits (e.g., missing trailing newlines, single vs. double quotes, whitespace).
-- Trivial PEP8/Linter warnings that an automated tool (like Ruff, Flake8, or Black) would catch.
+- Trivial syntax/style linter warnings specific to the detected languages that an automated tool (like Prettier, Black, ESLint, or gofmt) would catch.
 - Variable naming nitpicks, unless the name is actively misleading and dangerous.
 - Missing docstrings on private or simple utility functions.
 
@@ -70,7 +72,11 @@ async def synthesizer_node(state: dict) -> dict:
     
     for (filename, line), bodies in grouped.items():
         raw_findings_str = "\n\n---\n\n".join(bodies)
+        
+        detected_languages_str = ", ".join(state.get("detected_languages", [])) or "unknown"
+        
         response = await chain.ainvoke({
+            "detected_languages": detected_languages_str,
             "filename": filename,
             "line": line,
             "raw_findings": raw_findings_str

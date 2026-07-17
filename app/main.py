@@ -59,7 +59,21 @@ async def process_pull_request(payload: dict):
     
     try:
     
-        # 1. Clone repository into a temporary directory
+        # 1. Fetch diff data first to use for selective indexing
+        diff_data = await asyncio.to_thread(github_client.get_pr_files_diff, repo_full_name, pr_number)
+        
+        if not diff_data:
+            logger.info("No modifications found in PR. Skipping analysis.")
+            if head_sha:
+                await asyncio.to_thread(
+                    github_client.set_commit_status,
+                    repo_full_name, head_sha, "success", "No modifications to review."
+                )
+            return
+            
+        diff_files = [f["filename"] for f in diff_data]
+        
+        # 2. Clone repository into a temporary directory
         # Using asyncio.to_thread for blocking Git clone and ChromaDB indexing operations
         with tempfile.TemporaryDirectory() as temp_dir:
             logger.info(f"Cloning {repo_full_name} into {temp_dir}")
@@ -69,27 +83,17 @@ async def process_pull_request(payload: dict):
                 if head_sha:
                     repo.git.checkout(head_sha)
                     
-                # 2. Build RAG Index
-                indexer = CodebaseIndexer(repo_path=temp_dir)
+                # Build RAG Index only for diff_files
+                indexer = CodebaseIndexer(repo_path=temp_dir, diff_files=diff_files)
                 indexer.index_repository()
                 return indexer.persist_directory
                 
             chroma_persist_dir = await asyncio.to_thread(clone_and_index)
             
-            # 2.5. Run SAST scanners concurrently on the cloned repo
-            raw_sast_alerts = await run_all_sast_scanners(temp_dir)
-        
-            # 3. Get diff data
-            diff_data = await asyncio.to_thread(github_client.get_pr_files_diff, repo_full_name, pr_number)
-            
-            if not diff_data:
-                logger.info("No modifications found in PR. Skipping analysis.")
-                if head_sha:
-                    await asyncio.to_thread(
-                        github_client.set_commit_status,
-                        repo_full_name, head_sha, "success", "No modifications to review."
-                    )
-                return
+            # 3. Run SAST scanners concurrently on the cloned repo
+            sast_results = await run_all_sast_scanners(temp_dir)
+            raw_sast_alerts = sast_results.get("alerts", [])
+            detected_languages = sast_results.get("languages", [])
                 
             # 4. Invoke LangGraph workflow
             initial_state = {
@@ -98,6 +102,7 @@ async def process_pull_request(payload: dict):
                 "commit_id": head_sha,
                 "diff_data": diff_data,
                 "chroma_persist_dir": chroma_persist_dir,
+                "detected_languages": detected_languages,
                 "security_findings": [],
                 "style_findings": [],
                 "raw_sast_alerts": raw_sast_alerts,

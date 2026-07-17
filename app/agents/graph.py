@@ -12,6 +12,7 @@ class AgentState(TypedDict):
     commit_id: str
     diff_data: List[Dict[str, Any]]
     chroma_persist_dir: str
+    detected_languages: List[str]
     
     # We use operator.add to append to lists rather than overwrite them if we run nodes in parallel,
     # but for simplicity we will run them sequentially. It's still good practice to annotate for appending.
