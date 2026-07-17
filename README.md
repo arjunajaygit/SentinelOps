@@ -72,6 +72,40 @@ graph TD
 
 ---
 
+## ⚙️ GitHub Configuration Guide
+
+To fully integrate SentinelOps as a strict CI gatekeeper, you must configure your GitHub repository and Personal Access Token properly.
+
+### 1. Personal Access Token Permissions
+For Enterprise security, it is highly recommended to use a **Fine-grained Personal Access Token** following the principle of least privilege. 
+
+Grant the following permissions to your token:
+- **Administration (Read and write):** Required only if you plan to use `setup_repo.py` to automate branch protection.
+- **Commit statuses (Read and write):** Allows SentinelOps to post the yellow/red/green CI gate dots on pull requests.
+- **Contents (Read-only):** Allows SentinelOps to securely `git clone` the codebase for RAG context without accidentally modifying your source code.
+- **Pull requests (Read and write):** Allows SentinelOps to post the inline code review comments.
+- **Metadata (Read-only):** Automatically assigned by GitHub.
+
+*(If you are using a Classic Token, simply check the `repo` scope).*
+
+### 2. Configure Webhooks
+1. Go to your Repository Settings > **Webhooks** > **Add webhook**.
+2. **Payload URL:** Your server/ngrok URL appended with `/webhook` (e.g., `https://your-ngrok.app/webhook`).
+3. **Content type:** `application/json`.
+4. **Secret:** Match the `WEBHOOK_SECRET` in your `.env`.
+5. **Events:** Select "Let me select individual events", then check **Pull requests**.
+
+### 3. Enforce Strict Branch Protection (Optional)
+To physically block the "Merge" button when SentinelOps finds critical security or architectural flaws, you must enforce a Branch Protection rule. We have provided an automated script to configure this for you.
+
+Run the following command in the project root:
+```bash
+python setup_repo.py --repo your_username/your_repository_name
+```
+*(This requires your token to have Repository Administration permissions).*
+
+---
+
 ## 🚀 Quickstart & Local Testing
 
 ### 1. Environment Setup
@@ -79,7 +113,11 @@ Create a `.env` file in the root directory. Never commit this file.
 ```ini
 WEBHOOK_SECRET=your_github_webhook_secret
 GITHUB_TOKEN=ghp_your_github_pat
-GROQ_API_KEY=gsk_your_groq_api_key
+
+# OpenAI-Compatible API Configuration (e.g., Groq, OpenAI, Ollama)
+LLM_API_KEY=gsk_your_api_key
+LLM_BASE_URL=https://api.groq.com/openai/v1
+LLM_MODEL=llama-3.3-70b-versatile
 ```
 
 ### 2. Run the Development Server Locally

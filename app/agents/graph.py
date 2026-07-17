@@ -18,6 +18,7 @@ class AgentState(TypedDict):
     style_findings: Annotated[List[Dict[str, Any]], operator.add]
     
     final_comments: List[Dict[str, Any]]
+    critical_issues_found: bool
 
 def build_graph():
     """

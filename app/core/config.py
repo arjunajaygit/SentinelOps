@@ -10,7 +10,9 @@ class Settings(BaseSettings):
     WEBHOOK_SECRET: str = ""
     
     # LLM Settings
-    GROQ_API_KEY: str = ""
+    LLM_API_KEY: str = ""
+    LLM_BASE_URL: str | None = None
+    LLM_MODEL: str = "llama-3.3-70b-versatile"
     
     # General Settings
     APP_NAME: str = "SentinelOps"

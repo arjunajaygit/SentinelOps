@@ -77,3 +77,37 @@ class GitHubClient:
         if not commits:
             raise ValueError(f"No commits found in PR #{pr_number}")
         return commits[-1].sha
+
+    def set_commit_status(self, repo_full_name: str, commit_id: str, state: str, description: str, context: str = "SentinelOps"):
+        """
+        Sets the commit status (e.g., pending, success, failure, error) for the Checks API.
+        """
+        try:
+            repo = self.client.get_repo(repo_full_name)
+            commit = repo.get_commit(commit_id)
+            commit.create_status(
+                state=state,
+                description=description,
+                context=context
+            )
+            logger.info(f"Successfully set commit status '{state}' for {commit_id[:7]}")
+        except Exception as e:
+            logger.error(f"Failed to set commit status for {commit_id[:7]}. Error: {str(e)}")
+
+    def enforce_branch_protection(self, repo_full_name: str, branch_name: str = "main"):
+        """
+        Enforces branch protection on the specified branch, requiring the SentinelOps status check.
+        """
+        try:
+            repo = self.client.get_repo(repo_full_name)
+            branch = repo.get_branch(branch_name)
+            
+            # Require the "SentinelOps" status check to pass before merging
+            branch.edit_protection(
+                strict=True,
+                contexts=["SentinelOps"]
+            )
+            logger.info(f"Successfully enforced branch protection on {repo_full_name}:{branch_name}")
+        except Exception as e:
+            logger.error(f"Failed to enforce branch protection on {repo_full_name}:{branch_name}. Error: {str(e)}")
+            raise e

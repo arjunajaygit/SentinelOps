@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
 
@@ -39,7 +39,7 @@ async def synthesizer_node(state: dict) -> dict:
     
     all_findings = security_findings + style_findings
     if not all_findings:
-        return {"final_comments": []}
+        return {"final_comments": [], "critical_issues_found": False}
         
     grouped = {}
     for f in all_findings:
@@ -48,7 +48,7 @@ async def synthesizer_node(state: dict) -> dict:
             grouped[key] = []
         grouped[key].append(f['body'])
         
-    llm = ChatGroq(temperature=0, model="llama-3.3-70b-versatile", api_key=settings.GROQ_API_KEY)
+    llm = ChatOpenAI(temperature=0, model=settings.LLM_MODEL, api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYNTHESIZER_SYSTEM_PROMPT),
@@ -72,4 +72,4 @@ async def synthesizer_node(state: dict) -> dict:
             "body": response.content
         })
         
-    return {"final_comments": final_comments}
+    return {"final_comments": final_comments, "critical_issues_found": len(final_comments) > 0}

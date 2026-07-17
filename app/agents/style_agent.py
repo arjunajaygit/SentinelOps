@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
 from app.rag.retriever import CodebaseRetriever
@@ -18,7 +18,7 @@ async def style_node(state: dict) -> dict:
         return {"style_findings": []}
         
     retriever = CodebaseRetriever(persist_dir)
-    llm = ChatGroq(temperature=0, model="llama-3.3-70b-versatile", api_key=settings.GROQ_API_KEY)
+    llm = ChatOpenAI(temperature=0, model=settings.LLM_MODEL, api_key=settings.LLM_API_KEY, base_url=settings.LLM_BASE_URL)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are a strict Code Style Specialist Agent.
