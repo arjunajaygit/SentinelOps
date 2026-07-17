@@ -1,5 +1,5 @@
 # 🛡️ SentinelOps
-**Autonomous, Multi-Agent DevSecOps Code Reviewer**
+**Autonomous, Polyglot Multi-Agent DevSecOps Code Reviewer**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
@@ -28,18 +28,26 @@ graph TD
     %% RAG Pipeline
     subgraph Local Edge Environment
         API -->|2. Clone Repo & Extract Diff| RAG[Codebase Context Agent]
-        RAG -->|Chunk & Embed| CHROMA[(ChromaDB Vector Store)]
+        RAG -->|Filter Modified Files| POLY_RAG[Polyglot Syntax-Aware Splitting]
+        POLY_RAG -->|Chunk & Embed| CHROMA[(ChromaDB Vector Store)]
         HF[Hugging Face all-MiniLM-L6-v2] -.->|Generates Embeddings| CHROMA
     end
 
     %% SAST Pipeline
     subgraph SAST Orchestrator
-        API -->|3. Concurrent Scan| BANDIT[Bandit]
-        API -->|3. Concurrent Scan| SEMGREP[Semgrep]
-        API -->|3. Concurrent Scan| GITLEAKS[Gitleaks]
+        API -->|3. Detect Languages| DYNAMIC_ROUTER[Dynamic Tool Router]
+        DYNAMIC_ROUTER --> BANDIT[Bandit (Python)]
+        DYNAMIC_ROUTER --> NJSSCAN[njsscan (JS/TS)]
+        DYNAMIC_ROUTER --> GOSEC[gosec (Go)]
+        DYNAMIC_ROUTER --> SEMGREP[Semgrep (Global)]
+        DYNAMIC_ROUTER --> GITLEAKS[Gitleaks (Global)]
+        
         BANDIT --> AGG[Alert Aggregator]
+        NJSSCAN --> AGG
+        GOSEC --> AGG
         SEMGREP --> AGG
         GITLEAKS --> AGG
+        
         AGG -->|Raw Alerts| TRIAGE[LLM Triage Analyst]
         TRIAGE -->|Filter False Positives| TRIAGED[Triaged Findings]
     end
@@ -71,10 +79,10 @@ graph TD
 - **Multi-Agent Orchestration:** Powered by LangGraph, SentinelOps deploys specialized autonomous agents for parallel analysis:
   - 🔒 **Security Agent:** Hunts for injection flaws, hardcoded secrets, and weak cryptography.
   - 🎨 **Style Agent:** Enforces DRY principles and prevents memory leaks or async blocking.
-  - 🛡️ **SAST Orchestrator:** Runs Bandit, Semgrep, and Gitleaks concurrently, then uses an LLM Triage Analyst to filter false positives before merging findings.
-  - 🧠 **Synthesizer Agent:** Acts as the Lead Reviewer, deduplicating findings and generating precise Markdown code suggestions that developers can safely copy and paste into their IDE.
+  - 🛡️ **SAST Orchestrator:** Dynamically detects repository languages and routes files to specialized tools (**Bandit** for Python, **njsscan** for JS/TS, **gosec** for Go, plus **Semgrep** & **Gitleaks** globally). It then uses an LLM Triage Analyst to filter false positives before merging findings.
+  - 🧠 **Synthesizer Agent:** Acts as the Lead Reviewer. It dynamically adjusts its strictness based on the languages detected in the PR (ignoring language-specific stylistic nits like PEP8 when irrelevant) and generates precise Markdown code suggestions.
+- **Polyglot RAG Architecture & Timeout Guard:** Unlike standard bots that naively slice code by character count, SentinelOps maps file extensions to LangChain's syntax-aware `Language` enums, ensuring functions and classes stay logically intact. Furthermore, it implements a **Timeout Guard** by selectively indexing *only* the files modified in the PR diff, ensuring lightning-fast execution even on massive enterprise monoliths.
 - **Defense-in-Depth Security:** Combines deterministic SAST tools (high recall, zero hallucination) with AI agents (contextual understanding) to catch vulnerabilities that neither approach would find alone.
-- **RAG Architecture (Retrieval-Augmented Generation):** Unlike standard bots that only read the PR diff, SentinelOps clones the repository and builds a local vector database using **ChromaDB** and **Hugging Face (`all-MiniLM-L6-v2`)**. This gives the AI deep architectural context to prevent hallucinations.
 - **Developer Fatigue Prevention:** A dual-layer intelligence filter: the SAST Orchestrator drops tool-level false positives, and the Synthesizer drops pedantic style nits, ensuring developers only see high-value, actionable alerts.
 - **Strict CI Gatekeeper:** Integrates directly with the **GitHub Checks API** to dynamically block or allow Pull Request merges based on the severity of the AI's findings.
 - **Provider-Agnostic LLM Configuration:** Natively supports any OpenAI-compatible API endpoint (OpenAI, Groq, local Ollama, vLLM) preventing vendor lock-in.
@@ -84,10 +92,11 @@ graph TD
 ---
 
 ## ⚡ Core Tech Stack
+- **Supported Languages:** Python, JavaScript, TypeScript, Go
 - **Backend:** FastAPI, Python, Uvicorn
 - **AI Orchestration:** LangGraph, LangChain
 - **Local RAG Pipeline:** ChromaDB, Hugging Face `sentence-transformers`
-- **SAST Toolchain:** Bandit, Semgrep, Gitleaks
+- **SAST Toolchain:** Bandit (Python), njsscan (JS/TS), gosec (Go), Semgrep, Gitleaks
 - **LLM Inference:** Groq (`llama-3.3-70b-versatile`)
 - **Git Operations:** PyGithub, GitPython, GitHub Webhooks
 - **Deployment:** Docker
@@ -146,6 +155,12 @@ LLM_MODEL=llama-3.3-70b-versatile
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
+```
+
+### 3. Run the Polyglot Test Suite
+SentinelOps includes a robust, fully mocked, 100% offline asynchronous test suite (`pytest`) to verify language detection, SAST routing, and LangChain syntax splitting.
+```bash
+pytest tests/test_polyglot.py -v
 ```
 
 ---
