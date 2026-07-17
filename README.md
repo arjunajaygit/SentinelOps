@@ -68,7 +68,7 @@ graph TD
 
 ## 🚀 Key Features
 
-- **Multi-Agent Orchestration:** Powered by LangGraph, SentinelOps deploys specialized autonomous agents for analysis:
+- **Multi-Agent Orchestration:** Powered by LangGraph, SentinelOps deploys specialized autonomous agents for parallel analysis:
   - 🔒 **Security Agent:** Hunts for injection flaws, hardcoded secrets, and weak cryptography.
   - 🎨 **Style Agent:** Enforces DRY principles and prevents memory leaks or async blocking.
   - 🛡️ **SAST Orchestrator:** Runs Bandit, Semgrep, and Gitleaks concurrently, then uses an LLM Triage Analyst to filter false positives before merging findings.
