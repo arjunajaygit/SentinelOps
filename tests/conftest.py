@@ -6,9 +6,9 @@ from app.core.config import settings
 
 @pytest.fixture(autouse=True)
 def set_dummy_env_vars(monkeypatch):
-    monkeypatch.setenv("GROQ_API_KEY", "dummy_groq_key")
+    monkeypatch.setenv("LLM_API_KEY", "dummy_llm_key")
     monkeypatch.setenv("GITHUB_TOKEN", "dummy_github_token")
-    settings.GROQ_API_KEY = "dummy_groq_key"
+    settings.LLM_API_KEY = "dummy_llm_key"
     settings.GITHUB_TOKEN = "dummy_github_token"
 
 @pytest.fixture
