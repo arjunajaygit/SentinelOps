@@ -36,11 +36,11 @@ graph TD
     %% SAST Pipeline
     subgraph SAST Orchestrator
         API -->|3. Detect Languages| DYNAMIC_ROUTER[Dynamic Tool Router]
-        DYNAMIC_ROUTER --> BANDIT[Bandit (Python)]
-        DYNAMIC_ROUTER --> NJSSCAN[njsscan (JS/TS)]
-        DYNAMIC_ROUTER --> GOSEC[gosec (Go)]
-        DYNAMIC_ROUTER --> SEMGREP[Semgrep (Global)]
-        DYNAMIC_ROUTER --> GITLEAKS[Gitleaks (Global)]
+        DYNAMIC_ROUTER --> BANDIT["Bandit (Python)"]
+        DYNAMIC_ROUTER --> NJSSCAN["njsscan (JS/TS)"]
+        DYNAMIC_ROUTER --> GOSEC["gosec (Go)"]
+        DYNAMIC_ROUTER --> SEMGREP["Semgrep (Global)"]
+        DYNAMIC_ROUTER --> GITLEAKS["Gitleaks (Global)"]
         
         BANDIT --> AGG[Alert Aggregator]
         NJSSCAN --> AGG
