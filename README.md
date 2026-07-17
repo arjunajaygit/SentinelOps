@@ -23,10 +23,11 @@ Unlike standard LLM wrappers, SentinelOps utilizes a stateful, multi-agent LangG
 graph TD
     %% Webhook Entry Point
     PR[GitHub PR Created] -->|Webhook Event| API(FastAPI Orchestrator)
+    API -->|1. Dispatch 'Pending' Status| STATUS_PENDING[GitHub Checks API]
     
     %% RAG Pipeline
     subgraph Local Edge Environment
-        API -->|Clone Repo & Extract Diff| RAG[Codebase Context Agent]
+        API -->|2. Clone Repo & Extract Diff| RAG[Codebase Context Agent]
         RAG -->|Chunk & Embed| CHROMA[(ChromaDB Vector Store)]
         HF[Hugging Face all-MiniLM-L6-v2] -.->|Generates Embeddings| CHROMA
     end
@@ -43,8 +44,11 @@ graph TD
     end
 
     %% Output
-    FILTER -->|Yes| POST[Post Inline GitHub Comment with Fix]
+    FILTER -->|Yes| POST[Post Inline GitHub Comment]
     FILTER -->|No| DROP[Silently Drop Noise]
+    
+    POST -->|3. Dispatch 'Failure' Status| STATUS_FAIL[GitHub Checks API: Block Merge]
+    DROP -->|3. Dispatch 'Success' Status| STATUS_PASS[GitHub Checks API: Allow Merge]
 ```
 
 ---
@@ -57,7 +61,9 @@ graph TD
   - 🧠 **Synthesizer Agent:** Acts as the Lead Reviewer, deduplicating findings and generating precise Markdown code suggestions that developers can safely copy and paste into their IDE.
 - **RAG Architecture (Retrieval-Augmented Generation):** Unlike standard bots that only read the PR diff, SentinelOps clones the repository and builds a local vector database using **ChromaDB** and **Hugging Face (`all-MiniLM-L6-v2`)**. This gives the AI deep architectural context to prevent hallucinations.
 - **Developer Fatigue Prevention:** A strict intelligence filter explicitly drops pedantic noise like formatting nits and missing docstrings, ensuring developers only see high-value, actionable alerts.
-- **Lightning Fast Inference:** Powered by **Groq** (`llama-3.3-70b-versatile`), providing instant, free inference.
+- **Strict CI Gatekeeper:** Integrates directly with the **GitHub Checks API** to dynamically block or allow Pull Request merges based on the severity of the AI's findings.
+- **Provider-Agnostic LLM Configuration:** Natively supports any OpenAI-compatible API endpoint (OpenAI, Groq, local Ollama, vLLM) preventing vendor lock-in.
+- **Lightning Fast Inference:** Engineered for high-speed analysis using Groq (`llama-3.3-70b-versatile`), providing instant, free inference.
 - **Cloud-Ready Containerization:** Fully containerized via Docker with DevSecOps footprint optimizations (CPU-only PyTorch) for fast, lightweight deployment.
 
 ---
