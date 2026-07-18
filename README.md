@@ -6,7 +6,7 @@
 [![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-orange)](#)
 [![Docker](https://img.shields.io/badge/Docker-Containerized-2496ED?logo=docker)](#)
 
-*SentinelOps is an event-driven webhook service that acts as a strict CI/CD gatekeeper. It listens to GitHub Pull Requests, maps architectural dependencies (Blast Radius), and runs a highly parallel, multi-agent LangGraph workflow to post actionable, zero-hallucination security fixes directly to your code.*
+*SentinelOps is an event-driven webhook service that acts as a strict CI/CD gatekeeper. It listens to GitHub Pull Requests, maps architectural dependencies (Blast Radius), and runs a highly parallel, multi-agent LangGraph workflow to post actionable, mathematically-backed security fixes directly to your code.*
 
 ---
 
@@ -144,9 +144,11 @@ docker run -p 8000:8000 --env-file .env arjunajaydocker/sentinel-ops
 
 ---
 
-## ⚠️ Known Limitations & Future Architecture
+## ⚠️ Known Limitations & Future Architecture (V2)
 
-SentinelOps is designed for high-speed, parallel analysis, but adheres to strict enterprise constraints:
-- **The "Mega PR" Limit:** PRs modifying thousands of files risk hitting LLM provider Rate Limits (RPM/TPM). Future iterations will introduce Adaptive Scanning (bypassing the LLM for massive refactors and relying purely on deterministic SAST).
+SentinelOps is designed for high-speed, parallel analysis, but adheres to strict enterprise constraints. Recognizing the boundary between probabilistic AI generation and deterministic execution, SentinelOps V2 will address the following limitations:
+
+- **The "Mega PR" Limit:** PRs modifying thousands of files risk hitting LLM provider Rate Limits (RPM/TPM). Future iterations will introduce Adaptive Scanning (bypassing the LLM entirely for massive refactors and relying purely on deterministic SAST tools).
 - **Context Window Overflow:** Excessively large files (e.g., 15MB minified JS bundles or SQL dumps) will exceed LLM context windows. These files are safely caught by `try/except` guards but are skipped for AI review.
-- **Prompt Injection:** As with all LLM-based tools, adversarial prompt injection via malicious code comments is a structural reality. SentinelOps mitigates this by running deterministic SAST scanners in parallel to the AI—ensuring actual vulnerabilities are flagged regardless of LLM compliance.
+- **Agentic Reflection (The Linter Feedback Loop):** Current LLMs occasionally hallucinate variables or syntax in their "Corrected Code" blocks. V2 will transition the LangGraph to a cyclic graph with a Sandbox Validator Node. The AI will be forced to dry-run compile its own suggested code (e.g., via `python -m py_compile`) and self-correct syntax errors before posting to GitHub.
+- **The Confidence Matrix & Negative RAG:** To combat AI "False Alarms" (misunderstanding safe internal logic), V2 will implement programmatic confidence gating. Alerts triggered by both SAST and AI will block the merge, while AI-only alerts will be advisory. Furthermore, when developers dismiss a false positive, it will be ingested into ChromaDB as a `negative_example`, allowing the RAG pipeline to autonomously learn the company's specific codebase quirks over time.
