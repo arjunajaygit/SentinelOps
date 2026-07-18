@@ -17,6 +17,10 @@ python-dotenv>=1.0.1
 bandit>=1.7.5
 semgrep>=1.66.0
 njsscan>=0.3.9
+checkov>=3.1.0
+
+# API / Threat Hunting
+aiohttp>=3.9.3
 
 # Testing
 pytest>=7.4.3

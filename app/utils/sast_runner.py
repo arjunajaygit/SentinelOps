@@ -4,6 +4,9 @@ import json
 import logging
 from typing import List, Dict, Any, Set
 
+from app.utils.osv_scanner import run_osv_scan
+from app.utils.entropy_analyzer import run_entropy_scan
+
 logger = logging.getLogger(__name__)
 
 SCANNER_TIMEOUT = 120  # seconds
@@ -29,6 +32,12 @@ def detect_languages(clone_dir: str) -> List[str]:
                 languages.add("go")
             elif file.endswith(".java"):
                 languages.add("java")
+            elif file.endswith(".tf"):
+                languages.add("terraform")
+            elif file.endswith((".yml", ".yaml")):
+                languages.add("yaml/ci")
+            elif file == "Dockerfile":
+                languages.add("docker")
                 
     logger.info(f"Detected languages in repository: {languages}")
     return list(languages)
@@ -184,7 +193,74 @@ async def run_secrets_scan(clone_dir: str) -> List[Dict[str, Any]]:
     return alerts
 
 
-async def run_all_sast_scanners(clone_dir: str) -> Dict[str, Any]:
+async def run_checkov(clone_dir: str) -> List[Dict[str, Any]]:
+    alerts = []
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "checkov", "-d", clone_dir, "-o", "json", "--quiet",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
+        
+        if stdout:
+            # Checkov can return a list or a dict depending on what it found
+            output = stdout.decode().strip()
+            if not output: return alerts
+            
+            # Checkov often wraps output in a list if there are multiple frameworks
+            data = json.loads(output)
+            results_list = data if isinstance(data, list) else [data]
+            
+            for res_block in results_list:
+                results = res_block.get("results", {})
+                failed_checks = results.get("failed_checks", [])
+                for check in failed_checks:
+                    alerts.append({
+                        "scanner": "checkov",
+                        "severity": "HIGH", # Checkov doesn't always provide severity, assume HIGH for failures
+                        "file": check.get("file_path", "").lstrip("/"),
+                        "line": check.get("file_line_range", [0])[0] if check.get("file_line_range") else 0,
+                        "description": f"[{check.get('check_id', '')}] {check.get('check_name', '')}",
+                        "confidence": "HIGH"
+                    })
+    except Exception as e:
+        logger.error(f"Error running Checkov: {e}")
+    return alerts
+
+
+async def run_hadolint(clone_dir: str) -> List[Dict[str, Any]]:
+    alerts = []
+    try:
+        # run hadolint on Dockerfile
+        dockerfile_path = os.path.join(clone_dir, "Dockerfile")
+        if not os.path.isfile(dockerfile_path): return alerts
+        
+        process = await asyncio.create_subprocess_exec(
+            "hadolint", "-f", "json", "Dockerfile",
+            cwd=clone_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
+        
+        if stdout:
+            data = json.loads(stdout.decode())
+            for issue in data:
+                alerts.append({
+                    "scanner": "hadolint",
+                    "severity": issue.get("level", "UNKNOWN").upper(),
+                    "file": issue.get("file", "Dockerfile"),
+                    "line": issue.get("line", 0),
+                    "description": f"[{issue.get('code', '')}] {issue.get('message', '')}",
+                    "confidence": "HIGH"
+                })
+    except Exception as e:
+        logger.error(f"Error running Hadolint: {e}")
+    return alerts
+
+
+async def run_all_sast_scanners(clone_dir: str, diff_files: List[str]) -> Dict[str, Any]:
     """
     Detects languages, dynamically allocates SAST tools, and runs them concurrently.
     Returns a unified dict containing detected languages and normalized alerts.
@@ -193,10 +269,12 @@ async def run_all_sast_scanners(clone_dir: str) -> Dict[str, Any]:
     
     detected_languages = detect_languages(clone_dir)
     
-    # Always run Semgrep and Gitleaks
+    # Always run Semgrep, Gitleaks, OSV, and Entropy
     tasks = {
         "semgrep": run_semgrep(clone_dir),
-        "gitleaks": run_secrets_scan(clone_dir)
+        "gitleaks": run_secrets_scan(clone_dir),
+        "osv": run_osv_scan(clone_dir, diff_files),
+        "entropy": run_entropy_scan(clone_dir, diff_files)
     }
     
     # Dynamically allocate language-specific scanners
@@ -206,6 +284,10 @@ async def run_all_sast_scanners(clone_dir: str) -> Dict[str, Any]:
         tasks["njsscan"] = run_njsscan(clone_dir)
     if "go" in detected_languages:
         tasks["gosec"] = run_gosec(clone_dir)
+    if "terraform" in detected_languages or "yaml/ci" in detected_languages:
+        tasks["checkov"] = run_checkov(clone_dir)
+    if "docker" in detected_languages:
+        tasks["hadolint"] = run_hadolint(clone_dir)
         
     scanner_names = list(tasks.keys())
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)

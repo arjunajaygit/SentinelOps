@@ -91,7 +91,7 @@ async def process_pull_request(payload: dict):
             chroma_persist_dir = await asyncio.to_thread(clone_and_index)
             
             # 3. Run SAST scanners concurrently on the cloned repo
-            sast_results = await run_all_sast_scanners(temp_dir)
+            sast_results = await run_all_sast_scanners(temp_dir, diff_files)
             raw_sast_alerts = sast_results.get("alerts", [])
             detected_languages = sast_results.get("languages", [])
                 

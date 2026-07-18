@@ -32,6 +32,10 @@ RUN wget -qO- "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAK
 # Install Gosec binary
 RUN wget -qO- https://raw.githubusercontent.com/securego/gosec/master/install.sh | sh -s -- -b /usr/local/bin v2.20.0
 
+# Install Hadolint binary (Docker Linter)
+RUN wget -qO /usr/local/bin/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-arm64 \
+    && chmod +x /usr/local/bin/hadolint
+
 # Set the working directory
 WORKDIR /app
 
@@ -40,7 +44,7 @@ COPY requirements.txt .
 
 # Install Python dependencies + SAST tools
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir bandit semgrep njsscan
+    && pip install --no-cache-dir bandit semgrep njsscan checkov
 
 # OPTIMIZATION: Pre-download the Hugging Face embedding model into the image.
 # This prevents the app from downloading it on every server restart/scale-up.
