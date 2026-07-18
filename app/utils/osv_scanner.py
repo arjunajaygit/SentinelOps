@@ -62,14 +62,18 @@ async def run_osv_scan(clone_dir: str, diff_files: List[str]) -> List[Dict[str, 
     if not packages_to_check:
         return alerts
 
-    # 2. Query OSV API
+    # Query OSV API
     # https://api.osv.dev/v1/query supports single package queries. We'll do batch queries using /querybatch
     try:
         queries = [{"version": pkg["version"], "package": pkg["package"]} for pkg in packages_to_check]
         payload = {"queries": queries}
         
+        import ssl
+        import certifi
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        
         async with aiohttp.ClientSession() as session:
-            async with session.post("https://api.osv.dev/v1/querybatch", json=payload, timeout=30) as response:
+            async with session.post("https://api.osv.dev/v1/querybatch", json=payload, timeout=30, ssl=ssl_context) as response:
                 if response.status != 200:
                     logger.error(f"OSV API returned status {response.status}")
                     return alerts
@@ -90,7 +94,7 @@ async def run_osv_scan(clone_dir: str, diff_files: List[str]) -> List[Dict[str, 
                                 "scanner": "osv",
                                 "severity": "CRITICAL",  # Threat hunting usually surfaces high/critical
                                 "file": pkg_info["file"],
-                                "line": 0,
+                                "line": 1,
                                 "description": f"[{cve_id}] {pkg_info['package']['name']}@{pkg_info['version']} - {summary}",
                                 "confidence": "HIGH"
                             })

@@ -43,13 +43,18 @@ def test_detect_languages(tmp_path):
     git_dir.mkdir()
     (git_dir / "hook.py").touch()
     
+    (tmp_path / "main.tf").touch()
+    (tmp_path / "Dockerfile").touch()
+    
     languages = set(detect_languages(str(tmp_path)))
     
     # Assert correct languages are found and ignored directories are skipped
     assert "python" in languages
     assert "javascript" in languages
     assert "go" in languages
-    assert len(languages) == 3
+    assert "terraform" in languages
+    assert "docker" in languages
+    assert len(languages) == 5
 
 
 @pytest.mark.asyncio
@@ -72,7 +77,11 @@ async def test_dynamic_sast_routing_python_only(mock_detect, mock_subprocess):
         mock_semgrep.return_value = []
         mock_secrets.return_value = []
         
-        await run_all_sast_scanners("/dummy/path")
+        with patch("app.utils.sast_runner.run_osv_scan", new_callable=AsyncMock) as mock_osv, \
+             patch("app.utils.sast_runner.run_entropy_scan", new_callable=AsyncMock) as mock_entropy:
+            mock_osv.return_value = []
+            mock_entropy.return_value = []
+            await run_all_sast_scanners("/dummy/path", [])
         
         # Always run
         mock_semgrep.assert_called_once()
@@ -105,7 +114,11 @@ async def test_dynamic_sast_routing_js_and_go(mock_detect, mock_subprocess):
         mock_semgrep.return_value = []
         mock_secrets.return_value = []
         
-        await run_all_sast_scanners("/dummy/path")
+        with patch("app.utils.sast_runner.run_osv_scan", new_callable=AsyncMock) as mock_osv, \
+             patch("app.utils.sast_runner.run_entropy_scan", new_callable=AsyncMock) as mock_entropy:
+            mock_osv.return_value = []
+            mock_entropy.return_value = []
+            await run_all_sast_scanners("/dummy/path", [])
         
         # Always run
         mock_semgrep.assert_called_once()
@@ -189,3 +202,75 @@ def test_selective_indexing(mock_text_loader, mock_chroma, tmp_path):
     assert str(tmp_path / "file_2.py") in loaded_files
     assert str(tmp_path / "file_7.py") in loaded_files
     assert str(tmp_path / "file_0.py") not in loaded_files
+
+@pytest.mark.asyncio
+@patch("app.utils.sast_runner.detect_languages")
+async def test_dynamic_sast_routing_iac(mock_detect, mock_subprocess):
+    """
+    Test SAST routing when Docker and Terraform are detected.
+    Should run: checkov, hadolint, semgrep, gitleaks.
+    """
+    mock_detect.return_value = ["docker", "terraform"]
+    
+    with patch("app.utils.sast_runner.run_checkov", new_callable=AsyncMock) as mock_checkov, \
+         patch("app.utils.sast_runner.run_hadolint", new_callable=AsyncMock) as mock_hadolint, \
+         patch("app.utils.sast_runner.run_semgrep", new_callable=AsyncMock) as mock_semgrep, \
+         patch("app.utils.sast_runner.run_secrets_scan", new_callable=AsyncMock) as mock_secrets:
+             
+        mock_checkov.return_value = []
+        mock_hadolint.return_value = []
+        mock_semgrep.return_value = []
+        mock_secrets.return_value = []
+        
+        with patch("app.utils.sast_runner.run_osv_scan", new_callable=AsyncMock) as mock_osv, \
+             patch("app.utils.sast_runner.run_entropy_scan", new_callable=AsyncMock) as mock_entropy:
+            mock_osv.return_value = []
+            mock_entropy.return_value = []
+            await run_all_sast_scanners("/dummy/path", [])
+        
+        mock_checkov.assert_called_once()
+        mock_hadolint.assert_called_once()
+        mock_semgrep.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_entropy_analyzer(tmp_path):
+    from app.utils.entropy_analyzer import run_entropy_scan
+    
+    # Create a dummy python file with a guaranteed high-entropy string (all unique chars) near a sink
+    test_file = tmp_path / "test_entropy.py"
+    test_file.write_text("exec('abcdefghijklmnopqrstuvwxyz0123456789!@#$%^')")
+    
+    alerts = await run_entropy_scan(str(tmp_path), ["test_entropy.py"])
+    
+    assert len(alerts) == 1
+    assert alerts[0]["scanner"] == "EntropyGuard"
+    assert alerts[0]["severity"] == "CRITICAL"
+    assert "High entropy" in alerts[0]["description"]
+
+@pytest.mark.asyncio
+async def test_osv_scanner_mocked(tmp_path):
+    from app.utils.osv_scanner import run_osv_scan
+    
+    # Create a dummy requirements.txt
+    req_file = tmp_path / "requirements.txt"
+    req_file.write_text("urllib3==1.25.10")
+    
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        # Mock the aiohttp response
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json.return_value = {
+            "results": [
+                {"vulns": [{"id": "CVE-2021-33503", "summary": "urllib3 ReDoS vulnerability"}]}
+            ]
+        }
+        # __aenter__ is needed for async with
+        mock_response.__aenter__.return_value = mock_response
+        mock_post.return_value = mock_response
+        
+        alerts = await run_osv_scan(str(tmp_path), ["requirements.txt"])
+        
+        assert len(alerts) == 1
+        assert alerts[0]["scanner"] == "osv"
+        assert alerts[0]["severity"] == "CRITICAL"
+        assert "CVE-2021-33503" in alerts[0]["description"]

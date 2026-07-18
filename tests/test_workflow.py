@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import patch, AsyncMock
 from langchain_core.messages import AIMessage
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 from app.agents.graph import build_graph
 from app.rag.retriever import CodebaseRetriever
 
@@ -18,9 +18,13 @@ def mock_state():
             }
         ],
         "chroma_persist_dir": "/tmp/chroma",
+        "detected_languages": [],
         "security_findings": [],
         "style_findings": [],
-        "final_comments": []
+        "raw_sast_alerts": [],
+        "triaged_sast_findings": [],
+        "final_comments": [],
+        "critical_issues_found": False
     }
 
 async def mock_llm_ainvoke(self, prompt_input, config=None, **kwargs):
@@ -38,7 +42,7 @@ async def mock_retriever_aget(*args, **kwargs):
     return "mocked context from chromadb"
 
 @pytest.mark.asyncio
-@patch.object(ChatGroq, "ainvoke", new=mock_llm_ainvoke)
+@patch.object(ChatOpenAI, "ainvoke", new=mock_llm_ainvoke)
 @patch.object(CodebaseRetriever, "aget_context_for_code", new=mock_retriever_aget)
 async def test_langgraph_workflow(mock_state):
     """
@@ -62,3 +66,4 @@ async def test_langgraph_workflow(mock_state):
     assert len(final_state["final_comments"]) == 1
     assert "suggestion" in final_state["final_comments"][0]["body"]
     assert final_state["final_comments"][0]["filename"] == "test.py"
+

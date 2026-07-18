@@ -43,31 +43,41 @@ def detect_languages(clone_dir: str) -> List[str]:
     return list(languages)
 
 
-async def run_bandit(clone_dir: str) -> List[Dict[str, Any]]:
+async def run_bandit(clone_dir: str, diff_files: List[str] = None) -> List[Dict[str, Any]]:
     alerts = []
     try:
-        process = await asyncio.create_subprocess_exec(
-            "bandit", "-r", clone_dir, "-f", "json", "-q",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
-
-        if process.returncode not in (0, 1):
-            logger.warning(f"Bandit exited with code {process.returncode}: {stderr.decode()[:200]}")
-            return []
-
-        if stdout:
-            data = json.loads(stdout.decode())
-            for result in data.get("results", []):
-                alerts.append({
-                    "scanner": "bandit",
-                    "severity": result.get("issue_severity", "UNKNOWN").upper(),
-                    "file": result.get("filename", ""),
-                    "line": result.get("line_number", 0),
-                    "description": f"[{result.get('test_id', '')}] {result.get('issue_text', '')}",
-                    "confidence": result.get("issue_confidence", "UNKNOWN").upper()
-                })
+        # Scope to diff files only — avoids scanning entire repo on large codebases
+        target_files = [os.path.join(clone_dir, f) for f in (diff_files or []) if f.endswith('.py')]
+        if not target_files:
+            target_files = [clone_dir]  # fallback to full scan if no Python diff files
+            
+        # Batch target files to avoid ARG_MAX (OSError: [Errno 7])
+        batch_size = 500
+        batches = [target_files[i:i + batch_size] for i in range(0, len(target_files), batch_size)]
+        
+        for batch in batches:
+            process = await asyncio.create_subprocess_exec(
+                "bandit", "-f", "json", "-q", *batch,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
+    
+            if process.returncode not in (0, 1):
+                logger.warning(f"Bandit exited with code {process.returncode}: {stderr.decode()[:200]}")
+                continue
+    
+            if stdout:
+                data = json.loads(stdout.decode())
+                for result in data.get("results", []):
+                    alerts.append({
+                        "scanner": "bandit",
+                        "severity": result.get("issue_severity", "UNKNOWN").upper(),
+                        "file": result.get("filename", ""),
+                        "line": result.get("line_number", 0),
+                        "description": f"[{result.get('test_id', '')}] {result.get('issue_text', '')}",
+                        "confidence": result.get("issue_confidence", "UNKNOWN").upper()
+                    })
     except Exception as e:
         logger.error(f"Error running Bandit: {e}")
     return alerts
@@ -138,27 +148,35 @@ async def run_gosec(clone_dir: str) -> List[Dict[str, Any]]:
     return alerts
 
 
-async def run_semgrep(clone_dir: str) -> List[Dict[str, Any]]:
+async def run_semgrep(clone_dir: str, diff_files: List[str] = None) -> List[Dict[str, Any]]:
     alerts = []
     try:
-        process = await asyncio.create_subprocess_exec(
-            "semgrep", "scan", "--json", "--quiet", clone_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
-
-        if stdout:
-            data = json.loads(stdout.decode())
-            for result in data.get("results", []):
-                alerts.append({
-                    "scanner": "semgrep",
-                    "severity": result.get("extra", {}).get("severity", "UNKNOWN").upper(),
-                    "file": result.get("path", ""),
-                    "line": result.get("start", {}).get("line", 0),
-                    "description": f"[{result.get('check_id', '')}] {result.get('extra', {}).get('message', '')}",
-                    "confidence": "HIGH"
-                })
+        # Scope to diff files only when available
+        target_paths = [os.path.join(clone_dir, f) for f in (diff_files or [])] if diff_files else [clone_dir]
+        
+        # Batch target paths to avoid ARG_MAX
+        batch_size = 500
+        batches = [target_paths[i:i + batch_size] for i in range(0, len(target_paths), batch_size)]
+        
+        for batch in batches:
+            process = await asyncio.create_subprocess_exec(
+                "semgrep", "scan", "--json", "--quiet", *batch,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=SCANNER_TIMEOUT)
+    
+            if stdout:
+                data = json.loads(stdout.decode())
+                for result in data.get("results", []):
+                    alerts.append({
+                        "scanner": "semgrep",
+                        "severity": result.get("extra", {}).get("severity", "UNKNOWN").upper(),
+                        "file": result.get("path", ""),
+                        "line": result.get("start", {}).get("line", 0),
+                        "description": f"[{result.get('check_id', '')}] {result.get('extra', {}).get('message', '')}",
+                        "confidence": "HIGH"
+                    })
     except Exception as e:
         logger.error(f"Error running Semgrep: {e}")
     return alerts
@@ -271,7 +289,7 @@ async def run_all_sast_scanners(clone_dir: str, diff_files: List[str]) -> Dict[s
     
     # Always run Semgrep, Gitleaks, OSV, and Entropy
     tasks = {
-        "semgrep": run_semgrep(clone_dir),
+        "semgrep": run_semgrep(clone_dir, diff_files),
         "gitleaks": run_secrets_scan(clone_dir),
         "osv": run_osv_scan(clone_dir, diff_files),
         "entropy": run_entropy_scan(clone_dir, diff_files)
@@ -279,7 +297,7 @@ async def run_all_sast_scanners(clone_dir: str, diff_files: List[str]) -> Dict[s
     
     # Dynamically allocate language-specific scanners
     if "python" in detected_languages:
-        tasks["bandit"] = run_bandit(clone_dir)
+        tasks["bandit"] = run_bandit(clone_dir, diff_files)
     if "javascript" in detected_languages:
         tasks["njsscan"] = run_njsscan(clone_dir)
     if "go" in detected_languages:

@@ -11,6 +11,7 @@ from app.core.github_client import GitHubClient
 from app.rag.indexer import CodebaseIndexer
 from app.agents.graph import build_graph
 from app.utils.sast_runner import run_all_sast_scanners
+from app.utils.blast_radius import analyze_blast_radius
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,6 +19,12 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title=settings.APP_NAME)
 github_client = GitHubClient()
 workflow = build_graph()
+
+if not settings.WEBHOOK_SECRET:
+    logger.warning(
+        "⚠️  WEBHOOK_SECRET is not set. All incoming webhooks will be accepted WITHOUT signature verification. "
+        "This is acceptable for local development but MUST be configured for production deployments."
+    )
 
 def verify_signature(payload: bytes, signature: str) -> bool:
     if not settings.WEBHOOK_SECRET:
@@ -78,17 +85,23 @@ async def process_pull_request(payload: dict):
         with tempfile.TemporaryDirectory() as temp_dir:
             logger.info(f"Cloning {repo_full_name} into {temp_dir}")
             
-            def clone_and_index():
+            def clone_repo():
                 repo = Repo.clone_from(clone_url, temp_dir)
                 if head_sha:
                     repo.git.checkout(head_sha)
                     
-                # Build RAG Index only for diff_files
-                indexer = CodebaseIndexer(repo_path=temp_dir, diff_files=diff_files)
+            await asyncio.to_thread(clone_repo)
+            
+            # Identify dependencies (Blast Radius)
+            dependent_files = await analyze_blast_radius(temp_dir, diff_data)
+            
+            def index_repo():
+                # Build RAG Index for diff_files and dependent_files
+                indexer = CodebaseIndexer(repo_path=temp_dir, diff_files=diff_files, dependent_files=dependent_files)
                 indexer.index_repository()
                 return indexer.persist_directory
                 
-            chroma_persist_dir = await asyncio.to_thread(clone_and_index)
+            chroma_persist_dir = await asyncio.to_thread(index_repo)
             
             # 3. Run SAST scanners concurrently on the cloned repo
             sast_results = await run_all_sast_scanners(temp_dir, diff_files)
@@ -101,6 +114,7 @@ async def process_pull_request(payload: dict):
                 "pr_number": pr_number,
                 "commit_id": head_sha,
                 "diff_data": diff_data,
+                "dependent_files": dependent_files,
                 "chroma_persist_dir": chroma_persist_dir,
                 "detected_languages": detected_languages,
                 "security_findings": [],
@@ -125,6 +139,11 @@ async def process_pull_request(payload: dict):
             if not valid_comments:
                 logger.info("✅ PR is clean (or only had trivial style issues). No comment posted.")
             else:
+                # Clean up prior SentinelOps comments to prevent duplicates on re-push
+                await asyncio.to_thread(
+                    github_client.delete_prior_bot_comments,
+                    repo_full_name, pr_number
+                )
                 logger.info(f"📝 High-value issues found. Posting {len(valid_comments)} comments to GitHub...")
                 for comment in valid_comments:
                     await asyncio.to_thread(
@@ -153,11 +172,15 @@ async def process_pull_request(payload: dict):
         logger.info(f"Finished processing PR #{pr_number}")
 
     except Exception as e:
-        logger.error(f"Error processing PR #{pr_number}: {e}")
+        # Sanitize error message to prevent leaking the GitHub token from authenticated clone URLs
+        error_msg = str(e)
+        if settings.GITHUB_TOKEN:
+            error_msg = error_msg.replace(settings.GITHUB_TOKEN, "***")
+        logger.error(f"Error processing PR #{pr_number}: {error_msg}")
         if head_sha:
             await asyncio.to_thread(
                 github_client.set_commit_status,
-                repo_full_name, head_sha, "error", f"SentinelOps analysis failed: {str(e)[:40]}"
+                repo_full_name, head_sha, "error", f"SentinelOps analysis failed: {error_msg[:40]}"
             )
 
 @app.post("/webhook")
@@ -190,4 +213,8 @@ async def github_webhook(request: Request, background_tasks: BackgroundTasks):
     return {"msg": f"Event {event_type} ignored"}
 
 
+@app.get("/health")
+async def health_check():
+    """Liveness/readiness probe for container orchestrators (K8s, ECS, etc.)."""
+    return {"status": "healthy", "app": settings.APP_NAME}
 

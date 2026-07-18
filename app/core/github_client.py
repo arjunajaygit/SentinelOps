@@ -65,7 +65,45 @@ class GitHubClient:
             )
             logger.info(f"Successfully posted inline comment to {path}:{line}")
         except Exception as e:
-            logger.error(f"Failed to post inline comment to {path}:{line}. Error: {str(e)}")
+            logger.warning(f"Failed to post inline comment to {path}:{line}. GitHub API Error: {str(e)}")
+            logger.info(f"Falling back to standard PR comment for {path}:{line}")
+            try:
+                # Fallback: if the line isn't part of the diff context, GitHub rejects inline comments (422).
+                # We can still post it as a general PR comment so the user sees the finding!
+                fallback_body = f"**⚠️ Security Finding in `{path}` (Line {line})**\n\n{body}"
+                pr.create_issue_comment(fallback_body)
+                logger.info(f"Successfully posted fallback issue comment for {path}:{line}")
+            except Exception as fallback_e:
+                logger.error(f"Fallback comment also failed: {str(fallback_e)}")
+
+    def delete_prior_bot_comments(self, repo_full_name: str, pr_number: int):
+        """
+        Deletes all prior SentinelOps review comments and issue comments
+        from previous runs to prevent duplicate findings on re-push.
+        """
+        pr = self.get_pull_request(repo_full_name, pr_number)
+        
+        # Delete prior inline review comments authored by the bot
+        try:
+            for comment in pr.get_comments():
+                if comment.body and ("**Security Review" in comment.body or 
+                                     "**⚠️ Security Finding" in comment.body or
+                                     "**Docker Review" in comment.body or
+                                     "**Code Style Analysis" in comment.body or
+                                     "Scanner Consensus" in comment.body):
+                    comment.delete()
+                    logger.info(f"Deleted prior review comment {comment.id}")
+        except Exception as e:
+            logger.warning(f"Failed to clean prior review comments: {e}")
+        
+        # Delete prior fallback issue comments authored by the bot
+        try:
+            for comment in pr.get_issue_comments():
+                if comment.body and "⚠️ Security Finding" in comment.body:
+                    comment.delete()
+                    logger.info(f"Deleted prior issue comment {comment.id}")
+        except Exception as e:
+            logger.warning(f"Failed to clean prior issue comments: {e}")
             
     def get_latest_commit_sha(self, repo_full_name: str, pr_number: int) -> str:
         """

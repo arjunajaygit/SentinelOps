@@ -1,6 +1,5 @@
 import json
 import logging
-from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from app.core.config import settings
@@ -23,6 +22,9 @@ CLASSIFY AS TRUE POSITIVE (KEEP):
 - SQL injection, command injection, or path traversal vulnerabilities.
 - Use of weak cryptographic algorithms (MD5, SHA1 for security, DES).
 - Sensitive data exposure (logging secrets, returning credentials in API responses).
+- Dependency vulnerabilities (e.g., OSV Scanner results, CVEs).
+- Infrastructure as Code (IaC) or Docker misconfigurations (Checkov, Hadolint).
+- Custom EntropyGuard findings (high entropy or obfuscated payloads).
 - Any HIGH or CRITICAL severity finding that has a plausible exploit path.
 
 INSTRUCTIONS:

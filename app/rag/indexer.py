@@ -3,8 +3,8 @@ import logging
 from typing import Optional, List
 from langchain_community.document_loaders import TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
+from app.rag.embeddings import get_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -24,11 +24,12 @@ LANGUAGE_MAP = {
 }
 
 class CodebaseIndexer:
-    def __init__(self, repo_path: str, persist_directory: Optional[str] = None, diff_files: Optional[List[str]] = None):
+    def __init__(self, repo_path: str, persist_directory: Optional[str] = None, diff_files: Optional[List[str]] = None, dependent_files: Optional[List[str]] = None):
         self.repo_path = repo_path
         self.persist_directory = persist_directory or os.path.join(repo_path, ".chroma_db")
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        self.embeddings = get_embeddings()
         self.diff_files = diff_files or []
+        self.dependent_files = dependent_files or []
         
     def index_repository(self) -> Chroma:
         """
@@ -37,41 +38,49 @@ class CodebaseIndexer:
         """
         documents = []
         
-        # Timeout Guard: Instead of indexing the entire repo, only index modified files.
+        # Index diff files (code the developer modified)
         for rel_path in self.diff_files:
-            file_path = os.path.join(self.repo_path, rel_path)
+            self._process_file(rel_path, "target", documents)
             
-            if not os.path.isfile(file_path):
-                continue
-                
-            try:
-                loader = TextLoader(file_path, encoding='utf-8')
-                docs = loader.load()
-                for doc in docs:
-                    doc.metadata['source'] = rel_path
-                
-                # Dynamic Polyglot Code Splitting
-                ext = os.path.splitext(file_path)[1].lower()
-                if ext in LANGUAGE_MAP:
-                    splitter = RecursiveCharacterTextSplitter.from_language(
-                        language=LANGUAGE_MAP[ext],
-                        chunk_size=1000,
-                        chunk_overlap=200
-                    )
-                else:
-                    # Fallback to standard text splitting for unknown extensions
-                    splitter = RecursiveCharacterTextSplitter(
-                        chunk_size=1000,
-                        chunk_overlap=200
-                    )
-                    
-                chunked_docs = splitter.split_documents(docs)
-                documents.extend(chunked_docs)
-                
-            except Exception as e:
-                logger.warning(f"Failed to load or chunk {file_path}: {e}")
+        # Index dependent files (code impacted by the PR)
+        for rel_path in self.dependent_files:
+            self._process_file(rel_path, "dependency", documents)
 
-        logger.info(f"Indexing {len(documents)} chunks from {len(self.diff_files)} changed files into ChromaDB.")
+        logger.info(f"Indexing {len(documents)} chunks from {len(self.diff_files)} changed files and {len(self.dependent_files)} dependent files into ChromaDB.")
+
+    def _process_file(self, rel_path: str, role: str, documents: List):
+        file_path = os.path.join(self.repo_path, rel_path)
+        
+        if not os.path.isfile(file_path):
+            return
+            
+        try:
+            loader = TextLoader(file_path, encoding='utf-8')
+            docs = loader.load()
+            for doc in docs:
+                doc.metadata['source'] = rel_path
+                doc.metadata['role'] = role
+            
+            # Dynamic Polyglot Code Splitting
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext in LANGUAGE_MAP:
+                splitter = RecursiveCharacterTextSplitter.from_language(
+                    language=LANGUAGE_MAP[ext],
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
+            else:
+                # Fallback to standard text splitting for unknown extensions
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200
+                )
+                
+            chunked_docs = splitter.split_documents(docs)
+            documents.extend(chunked_docs)
+            
+        except Exception as e:
+            logger.warning(f"Failed to load or chunk {file_path}: {e}")
         
         # If no documents, we can just return a Chroma instance from an empty list or return early.
         # But Chroma.from_documents needs at least one document. 
@@ -90,7 +99,4 @@ class CodebaseIndexer:
                 persist_directory=self.persist_directory
             )
         
-        if hasattr(vectorstore, 'persist'):
-            vectorstore.persist()
-            
         return vectorstore
